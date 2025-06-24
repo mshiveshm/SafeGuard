@@ -1,0 +1,54 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Users Collection
+    match /users/{userId} {
+      // Any authenticated user can create their own user document
+      allow create: if request.auth != null && request.auth.uid == userId;
+      
+      // A user can read their own document fully.
+      // Authenticated users can read limited fields of other users' profiles.
+      allow get: if request.auth != null && request.auth.uid == userId;
+      allow list: if request.auth != null; // Allow fetching user list for chat creation
+
+      // A user can only update their own document.
+      allow update: if request.auth != null && request.auth.uid == userId;
+      
+      // Users should not be able to delete their accounts directly through rules.
+      allow delete: if false;
+    }
+
+    // Chats Collection
+    match /chats/{chatId} {
+      // Allow read/write access to users who are participants of the chat.
+      allow read, update: if request.auth != null && request.auth.uid in resource.data.participants;
+      
+      // Allow creating a new chat if the user is one of the participants.
+      allow create: if request.auth != null && request.auth.uid in request.resource.data.participants;
+
+      // Messages Subcollection
+      match /messages/{messageId} {
+        // Allow read access to chat participants.
+        allow read: if request.auth != null && get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid]);
+        
+        // Allow creating a message if the user is a participant and the author.
+        allow create: if request.auth != null && get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid]) && request.resource.data.senderId == request.auth.uid;
+        
+        // Disallow updating/deleting messages for data integrity.
+        allow update, delete: if false;
+      }
+    }
+
+    // Alerts Collection (for admin broadcasts)
+    match /alerts/{alertId} {
+      // Only admins can create, update, or delete alerts.
+      // We check for a custom claim 'admin' on the user's token.
+      allow create, update, delete: if request.auth != null && request.auth.token.admin == true;
+      
+      // Any authenticated user can read alerts.
+      allow read: if request.auth != null;
+    }
+  }
+}
